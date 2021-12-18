@@ -9,6 +9,7 @@ use cocoa::base::{id, nil, NO, YES};
 use cocoa::delegate;
 use cocoa::foundation::{NSDefaultRunLoopMode, NSInteger, NSPoint, NSRect, NSSize, NSString};
 use libc;
+use objc::rc::autoreleasepool;
 use objc::runtime::{Object, Sel};
 use objc::*;
 use std::ffi::CStr;
@@ -195,8 +196,9 @@ unsafe fn main_() {
         actual_buffer.clear();
         actual_buffer.draw_square(mouse.x as isize, mouse.y as isize, 100, 150);
 
-        let rep: id = msg_send![class!(NSBitmapImageRep), alloc];
-        let image_rep: id = msg_send![rep,
+        autoreleasepool(|| {
+            let rep: id = msg_send![class!(NSBitmapImageRep), alloc];
+            let image_rep: id = msg_send![rep,
             initWithBitmapDataPlanes: &buffer
                           pixelsWide: w
                           pixelsHigh: h
@@ -207,16 +209,16 @@ unsafe fn main_() {
                       colorSpaceName: color_space_name
                          bytesPerRow: row_size
                         bitsPerPixel: bpp];
-        let image_size = NSSize::new(w as f64, h as f64);
-        let image = NSImage::alloc(nil).initWithSize_(image_size);
-        image.addRepresentation_(image_rep);
-        let layer: id = window.contentView().layer();
-        let _: id = msg_send![layer, setContents: image];
+            let image_size = NSSize::new(w as f64, h as f64);
+            let image = NSImage::alloc(nil).initWithSize_(image_size);
+            image.addRepresentation_(image_rep);
+            let layer: id = window.contentView().layer();
+            let _: id = msg_send![layer, setContents: image];
 
-        println!("image_rep: {:p}", image_rep);
-        println!("      rep: {:p}", rep); // These two are the same thing
-        let _: () = msg_send![image, release];
-        let _: () = msg_send![image_rep, release];
+            // Both these and the autoreleasepool are necessary apparently
+            let _: () = msg_send![image, release];
+            let _: () = msg_send![image_rep, release];
+        });
 
         loop {
             let event = app.nextEventMatchingMask_untilDate_inMode_dequeue_(
