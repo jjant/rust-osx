@@ -2,18 +2,15 @@ use cocoa::appkit::NSApplicationActivationPolicy::NSApplicationActivationPolicyR
 use cocoa::appkit::NSBackingStoreType::NSBackingStoreBuffered;
 use cocoa::appkit::NSEventType::NSMouseMoved;
 use cocoa::appkit::{
-    CGFloat, NSApp, NSApplication, NSColor, NSColorSpace, NSEvent, NSEventMask, NSImage, NSView,
-    NSWindow, NSWindowStyleMask,
+    NSApp, NSApplication, NSColor, NSEvent, NSEventMask, NSImage, NSView, NSWindow,
+    NSWindowStyleMask,
 };
 use cocoa::base::{id, nil, NO, YES};
 use cocoa::delegate;
 use cocoa::foundation::{NSDefaultRunLoopMode, NSInteger, NSPoint, NSRect, NSSize, NSString};
-use cocoa::quartzcore::CALayer;
 use libc;
 use objc::runtime::{Object, Sel};
 use objc::*;
-use std::alloc::{self, Layout};
-use std::borrow::{Borrow, BorrowMut};
 use std::ffi::CStr;
 use std::ops::{Deref, DerefMut};
 
@@ -49,15 +46,27 @@ extern "C" fn on_window_will_close(_this: &Object, _cmd: Sel, _notification: id)
 }
 
 extern "C" fn on_window_did_resize(_this: &Object, _cmd: Sel, notification: id) {
-    let object: id = unsafe { msg_send![notification, object] };
-    let frame = unsafe { NSWindow::frame(object) };
+    let frame = unsafe {
+        let object: id = msg_send![notification, object];
+        NSWindow::frame(object)
+    };
 
-    unsafe { WINDOW.size = (frame.size.width, frame.size.height) };
+    unsafe {
+        WINDOW.size = (frame.size.width, frame.size.height);
+        println!("Window resized: {:?}", WINDOW.size);
+    };
+}
 
-    println!(
-        "Window resized: {:?}",
-        (frame.size.width, frame.size.height)
-    );
+extern "C" fn on_window_did_move(_this: &Object, _cmd: Sel, notification: id) {
+    let frame = unsafe {
+        let object: id = msg_send![notification, object];
+        NSWindow::frame(object)
+    };
+
+    unsafe {
+        WINDOW.origin = (frame.origin.x, frame.origin.y);
+        println!("Window moved: {:?}", WINDOW.origin);
+    };
 }
 
 fn main() {
@@ -86,34 +95,35 @@ impl<T> DerefMut for BoxedSlice<T> {
 }
 
 struct Buffer {
-    alloc: BoxedSlice<u8>,
+    allocation: BoxedSlice<u8>,
     width: usize,  // Size in pixels
     height: usize, // Size in pixels
 }
 
 impl Buffer {
     fn clear(&mut self) {
-        self.alloc.fill(0);
+        self.allocation.fill(0);
     }
 
     fn draw_square(&mut self, x: isize, y: isize, width: usize, height: usize) {
         for i in x..x + (width as isize) {
             for j in y..y + (height as isize) {
-                self.set_pixel(i, j, 0xFF_FF_FF_FF);
+                self.set_pixel(i, j);
             }
         }
     }
 
-    fn set_pixel(&mut self, x: isize, y: isize, color: u32) {
+    fn set_pixel(&mut self, x: isize, y: isize) {
         if x < 0 || x >= (self.width as isize) || y < 0 || y >= (self.height as isize) {
             return;
         }
         let pixel_offset = x as usize + y as usize * self.width;
 
-        (&mut self.alloc)[4 * pixel_offset + 0] = 0xFF;
-        (&mut self.alloc)[4 * pixel_offset + 1] = 0xFF;
-        (&mut self.alloc)[4 * pixel_offset + 2] = 0xFF;
-        (&mut self.alloc)[4 * pixel_offset + 3] = 0xFF;
+        // TODO: Not hardcode this to white
+        (&mut self.allocation)[4 * pixel_offset + 0] = 0xFF;
+        (&mut self.allocation)[4 * pixel_offset + 1] = 0xFF;
+        (&mut self.allocation)[4 * pixel_offset + 2] = 0xFF;
+        (&mut self.allocation)[4 * pixel_offset + 3] = 0xFF;
     }
 }
 
@@ -142,7 +152,8 @@ unsafe fn main_() {
     window.setDelegate_(delegate!("MyWindowDelegate", {
         window: id = window,
         (windowWillClose:) => on_window_will_close as extern fn(&Object, Sel, id),
-        (windowDidResize:) => on_window_did_resize as extern fn(&Object, Sel, id)
+        (windowDidResize:) => on_window_did_resize as extern fn(&Object, Sel, id),
+        (windowDidMove:) => on_window_did_move as extern fn(&Object, Sel, id)
     }));
 
     // BUFFER
@@ -157,7 +168,6 @@ unsafe fn main_() {
     buffer.write_bytes(200, 30 * row_size);
     // let buffer_pointer: *mut *mut u8 = &mut buffer;
 
-    let color_space: id = NSColorSpace::deviceCMYKColorSpace(NSColorSpace::alloc(nil));
     let color = NSColor::colorWithDeviceRed_green_blue_alpha_(nil, 1.0, 1.0, 1.0, 1.0);
     let color_space_name: id = msg_send![color, colorSpaceName];
 
@@ -171,7 +181,7 @@ unsafe fn main_() {
 
     println!("got here");
     let mut actual_buffer = Buffer {
-        alloc: BoxedSlice {
+        allocation: BoxedSlice {
             ptr: buffer,
             size: buffer_size,
         },
@@ -203,8 +213,10 @@ unsafe fn main_() {
         let layer: id = window.contentView().layer();
         let _: id = msg_send![layer, setContents: image];
 
-        let _: () = msg_send![image_rep, release];
+        println!("image_rep: {:p}", image_rep);
+        println!("      rep: {:p}", rep); // These two are the same thing
         let _: () = msg_send![image, release];
+        let _: () = msg_send![image_rep, release];
 
         loop {
             let event = app.nextEventMatchingMask_untilDate_inMode_dequeue_(
@@ -225,10 +237,10 @@ unsafe fn main_() {
                     println!("MouseMoved: {:?}", (mouse.x, mouse.y));
                 }
                 event_type => {
-                    // println!("{:?}", event_type);
-                    app.sendEvent_(event)
+                    println!("{:?}", event_type);
                 }
             }
+            app.sendEvent_(event)
         }
     }
 
